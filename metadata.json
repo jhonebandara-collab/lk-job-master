@@ -1,0 +1,6 @@
+{
+  "name": "LK Job Master",
+  "description": "LK Job Master: Sri Lanka Job & Government Gazette Radar with AI CV extraction, user confirmation, automated deduplication, and Rs. 500 monthly WhatsApp alerts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
