@@ -34,9 +34,16 @@ import {
   Mail,
   MapPin,
   GraduationCap,
-  Briefcase
+  Briefcase,
+  Play,
+  CheckSquare,
+  Square,
+  Trash2,
+  Edit2,
+  GitMerge,
+  Link as LinkIcon
 } from 'lucide-react';
-import { UserProfile, NotificationLog } from '../types';
+import { UserProfile, NotificationLog, StagedJob, JobVacancy } from '../types';
 import { compressImageFile } from '../utils/imageCompressor';
 
 interface AdminPanelProps {
@@ -48,7 +55,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   lang,
   onJobAddedOrMerged,
 }) => {
-  const [activeTab, setActiveTab] = useState<'users' | 'scanner' | 'subscribers' | 'logs' | 'hosting'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'scraper' | 'ocr' | 'subscribers' | 'logs' | 'hosting' | 'github'>('scraper');
+  const [stagedFilter, setStagedFilter] = useState<'ALL' | 'UNIQUE' | 'DUPLICATE' | 'GOV' | 'PRIVATE'>('ALL');
+  const [verifyingStagedId, setVerifyingStagedId] = useState<string | null>(null);
   const [subscribers, setSubscribers] = useState<UserProfile[]>([]);
   const [notificationLogs, setNotificationLogs] = useState<NotificationLog[]>([]);
   const [metrics, setMetrics] = useState<any>({
@@ -61,6 +70,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     mergedDuplicates: 0,
   });
 
+  // Staged Jobs & Scraper State
+  const [stagedJobs, setStagedJobs] = useState<StagedJob[]>([]);
+  const [selectedStagedIds, setSelectedStagedIds] = useState<string[]>([]);
+  const [isScrapingSites, setIsScrapingSites] = useState(false);
+  const [isDeployingStaged, setIsDeployingStaged] = useState(false);
+  const [customScrapeUrl, setCustomScrapeUrl] = useState('');
+  const [customScrapeInput, setCustomScrapeInput] = useState('');
+  const [autoMergeDuplicates, setAutoMergeDuplicates] = useState(true);
+  const [scraperMessage, setScraperMessage] = useState<string | null>(null);
+  const [deploySuccessMsg, setDeploySuccessMsg] = useState<string | null>(null);
+  const [editingStagedJob, setEditingStagedJob] = useState<StagedJob | null>(null);
+  const [portalOptions, setPortalOptions] = useState({
+    gazette: true,
+    topjobs: true,
+    xpress: true,
+    finders: true,
+  });
+
   // User Search & Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [filterDistrict, setFilterDistrict] = useState('ALL');
@@ -70,10 +97,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [selectedUserDossier, setSelectedUserDossier] = useState<UserProfile | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedCodeSnippet, setCopiedCodeSnippet] = useState<string | null>(null);
-
-  // Scanner state
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanResult, setScanResult] = useState<any>(null);
 
   // Ingestion form state
   const [ocrText, setOcrText] = useState('');
@@ -105,13 +128,198 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         setMetrics(data.metrics || {});
       }
     } catch (err) {
-      console.error(err);
+      console.error('Error loading admin metrics:', err);
+    }
+  };
+
+  // Load Staged Jobs from Server
+  const loadStagedJobs = async () => {
+    try {
+      const res = await fetch('/api/admin/scraper/staged');
+      const data = await res.json();
+      if (data.success && data.stagedJobs) {
+        setStagedJobs(data.stagedJobs);
+        // default select all
+        setSelectedStagedIds(data.stagedJobs.map((j: StagedJob) => j.stagedId));
+      }
+    } catch (err) {
+      console.error('Error loading staged jobs:', err);
     }
   };
 
   useEffect(() => {
     loadAdminData();
+    loadStagedJobs();
   }, []);
+
+  // Run Scraper across portals & custom URL
+  const handleRunScraper = async () => {
+    setIsScrapingSites(true);
+    setScraperMessage(null);
+    setDeploySuccessMsg(null);
+
+    const activeSources: string[] = [];
+    if (portalOptions.gazette) activeSources.push('GAZETTE');
+    if (portalOptions.topjobs) activeSources.push('TOPJOBS');
+    if (portalOptions.xpress) activeSources.push('XPRESSJOBS');
+    if (portalOptions.finders) activeSources.push('FINDERS');
+
+    try {
+      const res = await fetch('/api/admin/scraper/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sources: activeSources,
+          customUrl: customScrapeUrl.trim() || undefined,
+          customInput: customScrapeInput.trim() || undefined,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success && data.stagedJobs) {
+        setStagedJobs(data.stagedJobs);
+        setSelectedStagedIds(data.stagedJobs.map((s: StagedJob) => s.stagedId));
+        setScraperMessage(
+          lang === 'si'
+            ? `✅ රැකියා ඇබෑර්තු ${data.stagedCount} ක් සාර්ථකව Scrape කර staged queue එකට එක් කරන ලදී! (AI විසින් අනුපිටපත් ${data.duplicateDetectedCount} ක් සහ නව ඇබෑර්තු ${data.newStagedCount} ක් හඳුනාගන්නා ලදී).`
+            : `✅ Scraped ${data.stagedCount} vacancies into staging queue! (AI identified ${data.duplicateDetectedCount} duplicates and ${data.newStagedCount} new listings).`
+        );
+        setCustomScrapeInput('');
+      } else {
+        throw new Error(data.error || 'Scraping failed');
+      }
+    } catch (err: any) {
+      setScraperMessage(`❌ ${err.message || 'Error occurred while scraping'}`);
+    } finally {
+      setIsScrapingSites(false);
+    }
+  };
+
+  // Toggle selection for a staged job
+  const handleToggleSelect = (stagedId: string) => {
+    setSelectedStagedIds(prev => 
+      prev.includes(stagedId) ? prev.filter(id => id !== stagedId) : [...prev, stagedId]
+    );
+  };
+
+  // Select / Deselect All
+  const handleSelectAll = () => {
+    if (selectedStagedIds.length === stagedJobs.length) {
+      setSelectedStagedIds([]);
+    } else {
+      setSelectedStagedIds(stagedJobs.map(s => s.stagedId));
+    }
+  };
+
+  // Select only unique (non-duplicate) jobs
+  const handleSelectUniqueOnly = () => {
+    const uniqueIds = stagedJobs.filter(j => !j.aiDuplicateCheck.isDuplicate).map(j => j.stagedId);
+    setSelectedStagedIds(uniqueIds);
+  };
+
+  // Select only duplicate jobs (to review or merge sources)
+  const handleSelectDuplicatesOnly = () => {
+    const dupIds = stagedJobs.filter(j => j.aiDuplicateCheck.isDuplicate).map(j => j.stagedId);
+    setSelectedStagedIds(dupIds);
+  };
+
+  // Deep AI Verification with Gemini for a single staged vacancy
+  const handleDeepAiVerify = async (stagedId: string) => {
+    setVerifyingStagedId(stagedId);
+    try {
+      const res = await fetch('/api/admin/scraper/ai-verify-duplicate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stagedId }),
+      });
+      const data = await res.json();
+      if (data.success && data.aiDuplicateCheck) {
+        setStagedJobs(prev => prev.map(job => 
+          job.stagedId === stagedId ? { ...job, aiDuplicateCheck: data.aiDuplicateCheck } : job
+        ));
+      }
+    } catch (err) {
+      console.error('Deep AI duplicate verification error:', err);
+    } finally {
+      setVerifyingStagedId(null);
+    }
+  };
+
+  // Deploy Selected Jobs to Live Site
+  const handleDeploySelected = async () => {
+    if (selectedStagedIds.length === 0) return;
+
+    setIsDeployingStaged(true);
+    setDeploySuccessMsg(null);
+
+    try {
+      const res = await fetch('/api/admin/scraper/deploy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stagedIds: selectedStagedIds,
+          autoMergeDuplicates,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setDeploySuccessMsg(
+          lang === 'si'
+            ? `🚀 සාර්ථකයි! තෝරාගත් රැකියා ${data.deployedCount} ක් Live Site එකට Deploy කරන ලදී. (නව රැකියා: ${data.insertedCount}, අනුපිටපත් ඒකාබද්ධ කිරීම්: ${data.mergedCount}). මුළු සජීවී ඇබෑර්තු: ${data.totalLiveJobs}.`
+            : `🚀 Success! Deployed ${data.deployedCount} vacancies to live site! (${data.insertedCount} new listings, ${data.mergedCount} duplicates merged into existing records). Total live vacancies: ${data.totalLiveJobs}.`
+        );
+        onJobAddedOrMerged();
+        await loadStagedJobs();
+        await loadAdminData();
+      } else {
+        throw new Error(data.error || 'Failed to deploy');
+      }
+    } catch (err: any) {
+      setDeploySuccessMsg(`❌ ${err.message || 'Deploy failed'}`);
+    } finally {
+      setIsDeployingStaged(false);
+    }
+  };
+
+  // Discard Selected Staged Jobs
+  const handleDiscardSelected = async () => {
+    if (selectedStagedIds.length === 0) return;
+    try {
+      const res = await fetch('/api/admin/scraper/staged', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stagedIds: selectedStagedIds }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await loadStagedJobs();
+      }
+    } catch (err) {
+      console.error('Error discarding staged jobs:', err);
+    }
+  };
+
+  // Save changes to a staged job
+  const handleSaveStagedJob = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStagedJob) return;
+
+    try {
+      const res = await fetch(`/api/admin/scraper/staged/${editingStagedJob.stagedId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingStagedJob),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setEditingStagedJob(null);
+        await loadStagedJobs();
+      }
+    } catch (err) {
+      console.error('Error updating staged job:', err);
+    }
+  };
 
   // Filtered users for backup & search
   const filteredUsers = subscribers.filter(u => {
@@ -170,25 +378,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
-  };
-
-  // Trigger Multi-source crawler
-  const handleRunScanner = async () => {
-    setIsScanning(true);
-    setScanResult(null);
-    try {
-      const res = await fetch('/api/jobs/sync-sources', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        setScanResult(data);
-        onJobAddedOrMerged();
-        await loadAdminData();
-      }
-    } catch (err: any) {
-      setScanResult({ error: err.message });
-    } finally {
-      setIsScanning(false);
-    }
   };
 
   // Handle Image Upload for OCR
@@ -293,6 +482,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setTimeout(() => setCopiedCodeSnippet(null), 2000);
   };
 
+  const duplicateStagedCount = stagedJobs.filter(s => s.aiDuplicateCheck.isDuplicate).length;
+  const uniqueStagedCount = stagedJobs.filter(s => !s.aiDuplicateCheck.isDuplicate).length;
+
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       {/* Top Admin Header */}
@@ -306,18 +498,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </span>
             </div>
             <h2 className="text-xl sm:text-2xl font-black mt-2">
-              {lang === 'si' ? 'පද්ධති පාලනය, දත්ත Backups & සත්කාරක උපදෙස්' : 'System Radar, User Backups & Hosting'}
+              {lang === 'si' ? 'Job Scraper, AI Deduplication & Selective Deploy' : 'Job Scraper, AI Deduplication & Staging'}
             </h2>
             <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-2xl">
               {lang === 'si'
-                ? 'පරිශීලක Registration ID යටතේ Backups පිරික්සීම, CSV/JSON Extract කිරීම, ගැසට් ස්කෑන් කිරීම, සහ GitHub + Render සත්කාරක (Hosting) සැකසුම මෙහිදී කළ හැක.'
-                : 'Search & extract discrete candidate backups by Registration ID, merge vacancies, approve Rs. 500 alerts, and deploy to Render.'}
+                ? 'ගැසට් සහ රැකියා අඩවි වලින් සියලු විස්තර සහිතව ඇබෑර්තු Scrape කර, AI මඟින් අනුපිටපත් (Duplicates) හඳුනාගෙන, තෝරාගත් රැකියා පමණක් Live Site එකට Deploy කිරීමේ පාලකය.'
+                : 'Scrape Sri Lankan portals & Gazette, run AI deduplication to prevent duplicate listings, review and selectively deploy to the live radar.'}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
-              onClick={loadAdminData}
+              onClick={() => {
+                loadAdminData();
+                loadStagedJobs();
+              }}
               className="bg-white/10 hover:bg-white/20 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5"
             >
               <RefreshCw className="w-3.5 h-3.5" />
@@ -336,7 +531,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         {/* Real-time Metrics Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-6 pt-6 border-t border-slate-800 text-xs">
           <div className="bg-slate-800/60 p-3 rounded-2xl border border-slate-700/60">
-            <span className="text-slate-400 block text-[11px]">{lang === 'si' ? 'ලියාපදිංචි පරිශීලකයින්' : 'Total Registered'}</span>
+            <span className="text-slate-400 block text-[11px]">{lang === 'si' ? 'සජීවී ඇබෑර්තු' : 'Live Vacancies'}</span>
+            <span className="text-lg font-black text-white mt-0.5 block">{metrics.totalJobs}</span>
+          </div>
+
+          <div className="bg-slate-800/60 p-3 rounded-2xl border border-slate-700/60">
+            <span className="text-slate-400 block text-[11px]">{lang === 'si' ? 'Staged (සමාලෝචනයට)' : 'Staged for Deploy'}</span>
+            <span className="text-lg font-black text-amber-400 mt-0.5 block">{stagedJobs.length}</span>
+          </div>
+
+          <div className="bg-slate-800/60 p-3 rounded-2xl border border-slate-700/60">
+            <span className="text-slate-400 block text-[11px]">{lang === 'si' ? 'ඒකාබද්ධ අනුපිටපත්' : 'Duplicates Merged'}</span>
+            <span className="text-lg font-black text-purple-400 mt-0.5 block">{metrics.mergedDuplicates}</span>
+          </div>
+
+          <div className="bg-slate-800/60 p-3 rounded-2xl border border-slate-700/60">
+            <span className="text-slate-400 block text-[11px]">{lang === 'si' ? 'ලියාපදිංචි පරිශීලකයින්' : 'Registered Users'}</span>
             <span className="text-lg font-black text-white mt-0.5 block">{metrics.totalUsers}</span>
           </div>
 
@@ -346,29 +556,43 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
 
           <div className="bg-slate-800/60 p-3 rounded-2xl border border-slate-700/60">
-            <span className="text-slate-400 block text-[11px]">{lang === 'si' ? 'ක්‍රියාකාරී ග්‍රාහකයින්' : 'Active (Rs. 500)'}</span>
+            <span className="text-slate-400 block text-[11px]">{lang === 'si' ? 'ක්‍රියාකාරී (රු.500)' : 'Active Subscriptions'}</span>
             <span className="text-lg font-black text-cyan-400 mt-0.5 block">{metrics.activeSubscribers}</span>
-          </div>
-
-          <div className="bg-slate-800/60 p-3 rounded-2xl border border-slate-700/60">
-            <span className="text-slate-400 block text-[11px]">{lang === 'si' ? 'අනුමැතිය අපේක්ෂිත' : 'Pending Verification'}</span>
-            <span className="text-lg font-black text-amber-400 mt-0.5 block">{metrics.pendingApproval}</span>
-          </div>
-
-          <div className="bg-slate-800/60 p-3 rounded-2xl border border-slate-700/60">
-            <span className="text-slate-400 block text-[11px]">{lang === 'si' ? 'සජීවී ඇබෑර්තු' : 'Live Vacancies'}</span>
-            <span className="text-lg font-black text-white mt-0.5 block">{metrics.totalJobs}</span>
-          </div>
-
-          <div className="bg-slate-800/60 p-3 rounded-2xl border border-slate-700/60">
-            <span className="text-slate-400 block text-[11px]">{lang === 'si' ? 'ඒකාබද්ධ අනුපිටපත්' : 'Duplicates Merged'}</span>
-            <span className="text-lg font-black text-purple-400 mt-0.5 block">{metrics.mergedDuplicates}</span>
           </div>
         </div>
       </div>
 
       {/* Admin Navigation Sub-tabs */}
       <div className="flex overflow-x-auto gap-2 p-1.5 bg-slate-100 rounded-2xl border border-slate-200">
+        <button
+          onClick={() => setActiveTab('scraper')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
+            activeTab === 'scraper'
+              ? 'bg-white text-indigo-700 shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Radio className="w-3.5 h-3.5 text-indigo-600" />
+          <span>{lang === 'si' ? 'Scraper & Staging Deploy පාලකය' : 'Scraper & Selective Deploy'}</span>
+          {stagedJobs.length > 0 && (
+            <span className="bg-indigo-100 text-indigo-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+              {stagedJobs.length} Ready
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('ocr')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
+            activeTab === 'ocr'
+              ? 'bg-white text-amber-700 shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+          <span>{lang === 'si' ? 'ගැසට් / පුවත්පත් OCR Extractor' : 'Gazette / Image OCR'}</span>
+        </button>
+
         <button
           onClick={() => setActiveTab('users')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
@@ -378,7 +602,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           }`}
         >
           <UserCheck className="w-3.5 h-3.5 text-blue-600" />
-          <span>{lang === 'si' ? 'පරිශීලක දත්ත සහ Backups (User Records)' : 'User Profiles & Backups'}</span>
+          <span>{lang === 'si' ? 'පරිශීලක දත්ත සහ Backups' : 'User Profiles & Backups'}</span>
           <span className="bg-blue-100 text-blue-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
             {subscribers.length}
           </span>
@@ -402,18 +626,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('scanner')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
-            activeTab === 'scanner'
-              ? 'bg-white text-indigo-700 shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Radio className="w-3.5 h-3.5 text-indigo-600" />
-          <span>{lang === 'si' ? 'මූලාශ්‍ර ස්කෑනරය සහ OCR Extractor' : 'Multi-Source Scanner & OCR'}</span>
-        </button>
-
-        <button
           onClick={() => setActiveTab('logs')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
             activeTab === 'logs'
@@ -422,7 +634,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           }`}
         >
           <Send className="w-3.5 h-3.5 text-rose-500" />
-          <span>{lang === 'si' ? 'ඇලර්ට් පිටවීමේ සටහන් (Alert Logs)' : 'Dispatch Logs'}</span>
+          <span>{lang === 'si' ? 'ඇලර්ට් පිටවීමේ සටහන්' : 'Dispatch Logs'}</span>
         </button>
 
         <button
@@ -434,14 +646,607 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           }`}
         >
           <Globe className="w-3.5 h-3.5 text-blue-600" />
-          <span>{lang === 'si' ? 'GitHub & Render Deployment උපදෙස්' : 'GitHub & Render Hosting'}</span>
+          <span>{lang === 'si' ? 'Render Hosting උපදෙස්' : 'Render Guide'}</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('github')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
+            activeTab === 'github'
+              ? 'bg-white text-purple-700 shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <GitBranch className="w-3.5 h-3.5 text-purple-600" />
+          <span>{lang === 'si' ? '📁 වෙනස් කළ Files (GitHub Files)' : '📁 GitHub Modified Files'}</span>
         </button>
       </div>
 
-      {/* TAB 1: User Profiles & Backups (Primary Focus) */}
+      {/* TAB 1: Scraper & Staging Queue (Requested feature) */}
+      {activeTab === 'scraper' && (
+        <div className="space-y-6">
+          {/* Scrape Trigger Card */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <Radio className="w-5 h-5 text-indigo-600" />
+                  <span>{lang === 'si' ? '1. රැකියා අඩවි සහ ගැසට් පත්‍ර Scrape කිරීම (Multi-Source Job Scraper)' : '1. Scrape Multi-Portal Job Boards & Gazette'}</span>
+                </h3>
+                <p className="text-xs text-slate-600 mt-1 max-w-2xl">
+                  {lang === 'si'
+                    ? 'Scrape බොත්තම එබූ විට රජයේ ගැසට් (documents.gov.lk) සහ තෝරාගත් රැකියා අඩවි වල සියලු විස්තර (තනතුර, ආයතනය, සුදුසුකම්, වයස, වැටුප්, අවසන් දිනය) සමඟ දත්ත ලබාගනී. ඉන්පසු AI මඟින් අනුපිටපත් පරික්ෂා කර ඔබට තෝරාගැනීමට පහත ලැයිස්තුගත කරනු ඇත.'
+                    : 'Scrapes all vacancy details including requirements, salary, closing dates, and links. AI checks duplicates against live jobs before you selectively deploy.'}
+                </p>
+              </div>
+
+              <button
+                onClick={handleRunScraper}
+                disabled={isScrapingSites}
+                className="bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 disabled:bg-slate-300 text-white font-extrabold text-xs sm:text-sm px-6 py-3 rounded-2xl transition shadow-md hover:shadow-lg flex items-center gap-2 cursor-pointer shrink-0"
+              >
+                {isScrapingSites ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-white" />}
+                <span>{lang === 'si' ? 'දැන්ම Scrape කරන්න (Run Scraper)' : 'Scrape Now'}</span>
+              </button>
+            </div>
+
+            {/* Portal checklist toggles */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2">
+              <label className="flex items-center gap-2 text-xs font-semibold p-2.5 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={portalOptions.gazette}
+                  onChange={(e) => setPortalOptions(prev => ({ ...prev, gazette: e.target.checked }))}
+                  className="rounded text-indigo-600"
+                />
+                <span>🏛️ Gazette (documents.gov.lk)</span>
+              </label>
+
+              <label className="flex items-center gap-2 text-xs font-semibold p-2.5 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={portalOptions.topjobs}
+                  onChange={(e) => setPortalOptions(prev => ({ ...prev, topjobs: e.target.checked }))}
+                  className="rounded text-indigo-600"
+                />
+                <span>💼 TopJobs.lk</span>
+              </label>
+
+              <label className="flex items-center gap-2 text-xs font-semibold p-2.5 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={portalOptions.xpress}
+                  onChange={(e) => setPortalOptions(prev => ({ ...prev, xpress: e.target.checked }))}
+                  className="rounded text-indigo-600"
+                />
+                <span>⚡ XpressJobs</span>
+              </label>
+
+              <label className="flex items-center gap-2 text-xs font-semibold p-2.5 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={portalOptions.finders}
+                  onChange={(e) => setPortalOptions(prev => ({ ...prev, finders: e.target.checked }))}
+                  className="rounded text-indigo-600"
+                />
+                <span>🔍 Finders.lk</span>
+              </label>
+            </div>
+
+            {/* Custom URL or Text Scrape input */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1 flex items-center gap-1">
+                  <LinkIcon className="w-3.5 h-3.5 text-slate-400" />
+                  <span>{lang === 'si' ? 'හෝ විශේෂිත Job URL එකක් (Custom URL to scrape):' : 'Or specific URL to scrape:'}</span>
+                </label>
+                <input
+                  type="text"
+                  value={customScrapeUrl}
+                  onChange={(e) => setCustomScrapeUrl(e.target.value)}
+                  placeholder="https://documents.gov.lk/files/gazette/... or https://topjobs.lk/..."
+                  className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  {lang === 'si' ? 'නැතහොත් වෙබ් පිටුවේ පෙළ / දැන්වීම (Optional Raw Text):' : 'Or Paste raw page text:'}
+                </label>
+                <input
+                  type="text"
+                  value={customScrapeInput}
+                  onChange={(e) => setCustomScrapeInput(e.target.value)}
+                  placeholder="Paste vacancy text or table data..."
+                  className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white"
+                />
+              </div>
+            </div>
+
+            {scraperMessage && (
+              <div className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 ${
+                scraperMessage.startsWith('❌') 
+                  ? 'bg-rose-50 text-rose-700 border border-rose-200' 
+                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+              }`}>
+                {scraperMessage.startsWith('❌') ? (
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                )}
+                <span>{scraperMessage.replace(/^[❌✅]\s*/, '')}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Staging & Selective Deploy Action Bar */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <CheckSquare className="w-5 h-5 text-emerald-600" />
+                  <span>{lang === 'si' ? '2. සමාලෝචනය, තෝරාගැනීම සහ Live Site එකට Deploy කිරීම' : '2. Staged Vacancies Review & Selective Deployment'}</span>
+                </h3>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  {lang === 'si'
+                    ? 'Scrape කළ රැකියා Live Site එකට දැමීමට පෙර මෙහි සමාලෝචනය කළ හැක. අනවශ්‍ය රැකියා ඉවත් කිරීමට හෝ වෙනස් කිරීමට හැකිය.'
+                    : 'Review vacancies before publishing. Uncheck any vacancy you do not want to deploy.'}
+                </p>
+              </div>
+
+              {/* Deployment stats pill */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="bg-slate-100 text-slate-800 text-xs px-3 py-1 rounded-xl font-bold">
+                  Total Staged: {stagedJobs.length}
+                </span>
+                <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs px-2.5 py-1 rounded-xl font-bold">
+                  ✨ Unique: {uniqueStagedCount}
+                </span>
+                <span className="bg-purple-50 text-purple-800 border border-purple-200 text-xs px-2.5 py-1 rounded-xl font-bold">
+                  🧬 Duplicates: {duplicateStagedCount}
+                </span>
+              </div>
+            </div>
+
+            {/* Deploy Action Controls */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+              <div className="flex flex-wrap items-center gap-4">
+                <button
+                  type="button"
+                  onClick={handleSelectAll}
+                  className="text-xs font-bold text-slate-700 hover:text-slate-900 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {selectedStagedIds.length === stagedJobs.length ? (
+                    <CheckSquare className="w-4 h-4 text-blue-600" />
+                  ) : (
+                    <Square className="w-4 h-4 text-slate-400" />
+                  )}
+                  <span>
+                    {selectedStagedIds.length === stagedJobs.length
+                      ? (lang === 'si' ? 'සියල්ල තෝරා ඇත (Deselect All)' : 'Deselect All')
+                      : (lang === 'si' ? 'සියල්ල තෝරන්න (Select All)' : 'Select All')}
+                  </span>
+                </button>
+
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer bg-white px-3 py-1.5 rounded-xl border border-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={autoMergeDuplicates}
+                    onChange={(e) => setAutoMergeDuplicates(e.target.checked)}
+                    className="rounded text-purple-600"
+                  />
+                  <GitMerge className="w-3.5 h-3.5 text-purple-600" />
+                  <span>{lang === 'si' ? 'AI Duplicate Merging (එකම රැකියාව දෙපාරක් පළවීම වලක්වන්න)' : 'AI Merge Duplicates (Prevents Redundancy)'}</span>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={handleDiscardSelected}
+                  disabled={selectedStagedIds.length === 0}
+                  className="bg-slate-200 hover:bg-rose-100 hover:text-rose-700 disabled:opacity-50 text-slate-700 font-bold text-xs px-3.5 py-2 rounded-xl transition cursor-pointer flex items-center gap-1"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>{lang === 'si' ? 'ඉවත් කරන්න (Discard)' : 'Discard'}</span>
+                </button>
+
+                <button
+                  onClick={handleDeploySelected}
+                  disabled={isDeployingStaged || selectedStagedIds.length === 0}
+                  className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-extrabold text-xs sm:text-sm px-5 py-2 rounded-xl transition shadow-xs flex items-center gap-2 cursor-pointer"
+                >
+                  {isDeployingStaged ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  <span>
+                    {lang === 'si'
+                      ? `තෝරාගත් ${selectedStagedIds.length} ක් Deploy කරන්න`
+                      : `Deploy Selected (${selectedStagedIds.length})`}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {deploySuccessMsg && (
+              <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold rounded-2xl flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{deploySuccessMsg}</span>
+              </div>
+            )}
+
+            {/* Staged Jobs Cards */}
+            {stagedJobs.length === 0 ? (
+              <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-3xl p-6 text-slate-400 text-xs space-y-2">
+                <Radio className="w-8 h-8 mx-auto text-slate-300" />
+                <p className="font-bold text-slate-700 text-sm">
+                  {lang === 'si' ? 'දැනට Staged Queue එකේ රැකියා නොමැත.' : 'No vacancies in staging queue.'}
+                </p>
+                <p>
+                  {lang === 'si'
+                    ? 'ඉහත "දැන්ම Scrape කරන්න (Scrape Now)" බොත්තම ඔබා නවතම ගැසට් සහ රැකියා අඩවි වලින් ඇබෑර්තු ලබාගන්න.'
+                    : 'Click "Scrape Now" above to fetch vacancies from Government Gazette & leading job boards.'}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Filter Sub-nav for Staged Queue */}
+                <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-slate-100">
+                  <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => setStagedFilter('ALL')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        stagedFilter === 'ALL' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      All ({stagedJobs.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStagedFilter('UNIQUE')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        stagedFilter === 'UNIQUE' ? 'bg-emerald-600 text-white shadow-2xs' : 'text-emerald-800 hover:text-emerald-950'
+                      }`}
+                    >
+                      ✨ Unique ({uniqueStagedCount})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStagedFilter('DUPLICATE')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        stagedFilter === 'DUPLICATE' ? 'bg-purple-600 text-white shadow-2xs' : 'text-purple-800 hover:text-purple-950'
+                      }`}
+                    >
+                      🧬 Duplicates ({duplicateStagedCount})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStagedFilter('GOV')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        stagedFilter === 'GOV' ? 'bg-rose-600 text-white shadow-2xs' : 'text-rose-800 hover:text-rose-950'
+                      }`}
+                    >
+                      🏛️ Gazette ({stagedJobs.filter(s => s.category === 'GOVERNMENT').length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStagedFilter('PRIVATE')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        stagedFilter === 'PRIVATE' ? 'bg-blue-600 text-white shadow-2xs' : 'text-blue-800 hover:text-blue-950'
+                      }`}
+                    >
+                      💼 Corporate ({stagedJobs.filter(s => s.category !== 'GOVERNMENT').length})
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600">
+                    <span className="text-slate-400">Quick select:</span>
+                    <button
+                      type="button"
+                      onClick={handleSelectUniqueOnly}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 cursor-pointer font-bold"
+                    >
+                      Only Unique
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSelectDuplicatesOnly}
+                      className="px-2.5 py-1 rounded-lg bg-purple-50 text-purple-800 hover:bg-purple-100 border border-purple-200 cursor-pointer font-bold"
+                    >
+                      Only Duplicates
+                    </button>
+                  </div>
+                </div>
+
+                {stagedJobs
+                  .filter(job => {
+                    if (stagedFilter === 'UNIQUE') return !job.aiDuplicateCheck.isDuplicate;
+                    if (stagedFilter === 'DUPLICATE') return job.aiDuplicateCheck.isDuplicate;
+                    if (stagedFilter === 'GOV') return job.category === 'GOVERNMENT';
+                    if (stagedFilter === 'PRIVATE') return job.category !== 'GOVERNMENT';
+                    return true;
+                  })
+                  .map((job, idx) => {
+                  const isSelected = selectedStagedIds.includes(job.stagedId);
+                  const isDup = job.aiDuplicateCheck.isDuplicate;
+
+                  return (
+                    <div
+                      key={job.stagedId ? `${job.stagedId}-${idx}` : `staged-${idx}`}
+                      className={`p-4 sm:p-5 rounded-2xl border transition space-y-3 ${
+                        isSelected 
+                          ? isDup ? 'border-purple-300 bg-purple-50/20' : 'border-blue-300 bg-blue-50/10'
+                          : 'border-slate-200 bg-slate-50/40 opacity-75'
+                      }`}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => handleToggleSelect(job.stagedId)}
+                            className="mt-1 rounded text-blue-600 w-4 h-4 cursor-pointer"
+                          />
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                                job.category === 'GOVERNMENT'
+                                  ? 'bg-rose-100 text-rose-800'
+                                  : job.category === 'SEMI_GOVERNMENT'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-blue-100 text-blue-800'
+                              }`}>
+                                {job.category}
+                              </span>
+
+                              {isDup ? (
+                                <span className="bg-purple-100 text-purple-900 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 border border-purple-200">
+                                  <GitMerge className="w-3 h-3 text-purple-700" />
+                                  <span>AI Duplicate ({job.aiDuplicateCheck.confidenceScore}% Match)</span>
+                                </span>
+                              ) : (
+                                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <Sparkles className="w-3 h-3 text-emerald-600" />
+                                  <span>New Unique Listing</span>
+                                </span>
+                              )}
+
+                              <span className="text-[11px] font-mono text-slate-400">
+                                {job.stagedId}
+                              </span>
+                            </div>
+
+                            <h4 className="font-extrabold text-sm sm:text-base text-slate-900 mt-1">
+                              {job.title}
+                            </h4>
+                            <p className="text-xs text-slate-500 font-medium">
+                              {job.titleSi}
+                            </p>
+                            <p className="text-xs font-bold text-slate-700 mt-0.5">
+                              🏢 {job.organization}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Staged Action CTAs */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleDeepAiVerify(job.stagedId)}
+                            disabled={verifyingStagedId === job.stagedId}
+                            className="bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200 text-xs px-2.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                            title="Run deep Gemini AI semantic duplicate verification"
+                          >
+                            {verifyingStagedId === job.stagedId ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-600" />
+                            ) : (
+                              <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                            )}
+                            <span>{verifyingStagedId === job.stagedId ? 'Verifying...' : 'AI Verify'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setEditingStagedJob(job)}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-3 py-1.5 rounded-xl transition flex items-center gap-1 cursor-pointer"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                            <span>Edit</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* AI Duplicate Warning & Explanation */}
+                      {isDup && (
+                        <div className="bg-purple-50 border border-purple-200 p-3.5 rounded-xl text-xs text-purple-950 flex items-start gap-2.5">
+                          <GitMerge className="w-4 h-4 text-purple-700 shrink-0 mt-0.5" />
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <strong className="text-purple-900 font-bold">
+                                {lang === 'si' ? '🚨 AI මඟින් අනුපිටපතක් හඳුනාගන්නා ලදී (Duplicate Detected):' : '🚨 AI Duplicate Vacancy Detected:'}
+                              </strong>
+                              {job.aiDuplicateCheck.matchedExistingJobId && (
+                                <span className="bg-purple-200/80 text-purple-900 px-2 py-0.2 rounded font-mono font-bold text-[10px]">
+                                  Live Match: {job.aiDuplicateCheck.matchedExistingJobId}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-purple-900 text-[11px] leading-relaxed">
+                              {job.aiDuplicateCheck.reason}
+                            </p>
+                            <div className="bg-white/80 border border-purple-200/80 rounded-lg p-2 text-[11px] text-purple-950 font-medium">
+                              🎯 <strong>{lang === 'si' ? 'අනුපිටපත් වැළැක්වීමේ විසඳුම (Duplicate Prevention):' : 'Redundancy Prevention:'}</strong>{' '}
+                              {lang === 'si'
+                                ? 'මෙම ඇබෑර්තුව Deploy කිරීමේදී Live Site එකේ අලුත් පෝස්ට් එකක් ලෙස දෙවරක් පළ නොවේ! ඒ වෙනුවට මෙහි ඇති Source URLs (උදා: TopJobs/Gazette) සජීවී ඇබෑර්තුවට එකතු කර ඒකාබද්ධ කරනු ඇත.'
+                                : 'When deployed with AI Duplicate Merging, this will NOT create a redundant second post on the site. Its source URLs will be merged into the existing live listing.'}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Vacancy Details Bar */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 text-xs text-slate-600 bg-white/80 p-3 rounded-xl border border-slate-100">
+                        <div>
+                          <span className="text-[10px] text-slate-400 block font-semibold">Closing Date:</span>
+                          <span className="font-bold text-slate-800">📅 {job.closingDate}</span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-slate-400 block font-semibold">Salary / Scale:</span>
+                          <span className="font-medium text-slate-800">💰 {job.salaryRange}</span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-slate-400 block font-semibold">Education / Exp:</span>
+                          <span className="font-medium text-slate-800">🎓 {job.educationRequired.join(', ')} ({job.experienceYears}y exp)</span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-slate-400 block font-semibold">Sources ({job.sources.length}):</span>
+                          <span className="font-medium text-blue-700 truncate block">
+                            🌐 {job.sources.map(s => s.name).join(', ')}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: Gazette / Image OCR */}
+      {activeTab === 'ocr' && (
+        <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
+          <div>
+            <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-amber-500" />
+              <span>{lang === 'si' ? 'ගැසට් පත්‍රය / පුවත්පත් දැන්වීම් AI ඔස්සේ කියවීම (OCR Extraction)' : 'AI Gazette & Notice Extractor (Sinhala / English)'}</span>
+            </h3>
+            <p className="text-xs text-slate-600 mt-1">
+              {lang === 'si'
+                ? 'රජයේ ගැසට් පත්‍රයක හෝ පුවත්පත් දැන්වීමක ඡායාරූපයක් (Image) හෝ පෙළ (Sinhala / English) මෙහි ඇතුළත් කරන්න. Gemini AI මඟින් අදාළ සියලු සුදුසුකම් හා විස්තර නිවැරදිව කියවා දත්ත ගබඩාවට එක් කරනු ඇත.'
+                : 'Upload an image of a Government Gazette clipping or newspaper ad in Sinhala or English. Gemini AI extracts structured vacancy details.'}
+            </p>
+          </div>
+
+          <form onSubmit={handleExtractJob} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Image upload */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-700 block">
+                  {lang === 'si' ? 'දැන්වීමේ ඡායාරූපය (JPG / PNG / Clipping):' : 'Notice Clipping / Image:'}
+                </label>
+                <label className="border-2 border-dashed border-slate-300 hover:border-blue-500 bg-slate-50 rounded-2xl p-5 flex flex-col items-center justify-center text-center cursor-pointer transition">
+                  <Upload className="w-6 h-6 text-blue-600 mb-1" />
+                  <span className="text-xs font-bold text-slate-800">
+                    {ocrImageName || (lang === 'si' ? 'ඡායාරූපය තෝරන්න' : 'Upload Image')}
+                  </span>
+                  <span className="text-[10px] text-slate-500 mt-0.5">
+                    Sinhala or English notice
+                  </span>
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    className="hidden" 
+                    onChange={handleImageUpload} 
+                  />
+                </label>
+
+                {isCompressing ? (
+                  <div className="flex items-center gap-2 text-xs text-blue-600 font-medium animate-pulse">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>{lang === 'si' ? 'ඡායාරූපය ප්‍රශස්තකරණය වෙමින් පවතී...' : 'Optimizing notice image...'}</span>
+                  </div>
+                ) : ocrImageBase64 ? (
+                  <div className="flex items-center gap-2 text-xs text-emerald-600 font-medium">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>{ocrImageName} {lang === 'si' ? 'කියවීමට සූදානම්' : 'ready for OCR'}</span>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Source Details & Text */}
+              <div className="space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block mb-1">
+                      {lang === 'si' ? 'මූලාශ්‍රය' : 'Source Platform'}
+                    </label>
+                    <select
+                      value={ocrSourcePlatform}
+                      onChange={(e) => setOcrSourcePlatform(e.target.value)}
+                      className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-white"
+                    >
+                      <option value="Government Gazette (documents.gov.lk)">documents.gov.lk (Gazette)</option>
+                      <option value="TopJobs.lk">TopJobs.lk</option>
+                      <option value="XpressJobs">XpressJobs</option>
+                      <option value="Finders.lk">Finders.lk</option>
+                      <option value="Silumina / Sunday Observer Notice">Silumina / Observer (Newspaper)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block mb-1">
+                      {lang === 'si' ? 'මූලාශ්‍ර Link එක' : 'Source URL (Optional)'}
+                    </label>
+                    <input
+                      type="text"
+                      value={ocrSourceUrl}
+                      onChange={(e) => setOcrSourceUrl(e.target.value)}
+                      placeholder="https://..."
+                      className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-white"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">
+                    {lang === 'si' ? 'නැතහොත් පෙළ (Notice Text in Sinhala / English):' : 'Or Paste Notice Text:'}
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={ocrText}
+                    onChange={(e) => setOcrText(e.target.value)}
+                    placeholder={lang === 'si' ? 'ගැසට් පත්‍රයේ හෝ දැන්වීමේ සඳහන් පෙළ කොටස මෙහි ඇතුළත් කරන්න...' : 'Paste text from Gazette Part I: Sec (IIA) or newspaper notice...'}
+                    className="w-full text-xs p-3 rounded-xl border border-slate-200 bg-white resize-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+              {extractSuccessMsg ? (
+                <div className={`p-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 ${
+                  extractSuccessMsg.startsWith('❌') 
+                    ? 'bg-rose-50 text-rose-700 border border-rose-200' 
+                    : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                }`}>
+                  {extractSuccessMsg.startsWith('❌') ? (
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  )}
+                  <span>{extractSuccessMsg.replace(/^[❌✅]\s*/, '')}</span>
+                </div>
+              ) : <div />}
+
+              <button
+                type="submit"
+                disabled={isExtracting || isCompressing || (!ocrText.trim() && !ocrImageBase64)}
+                className="ml-auto bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-bold text-xs sm:text-sm px-6 py-2.5 rounded-xl transition shadow-xs flex items-center gap-2 cursor-pointer shrink-0"
+              >
+                {isExtracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 text-amber-400" />}
+                <span>{lang === 'si' ? 'AI මඟින් නිස්සාරණය කර එක් කරන්න' : 'Extract & Ingest via Gemini'}</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* TAB 3: User Profiles & Backups */}
       {activeTab === 'users' && (
         <div className="space-y-4">
-          {/* Search, Filter & Extract Toolbar */}
           <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
@@ -544,20 +1349,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           </div>
 
-          {/* User Dossiers List / Table */}
+          {/* User Dossiers List */}
           <div className="space-y-3">
             {filteredUsers.length === 0 ? (
               <div className="bg-white rounded-3xl p-8 text-center border border-slate-200 text-slate-500 text-xs">
                 {lang === 'si' ? 'සොයන ලද නිර්ණායක වලට අදාළ පරිශීලකයින් හමු නොවීය.' : 'No users match the search criteria.'}
               </div>
             ) : (
-              filteredUsers.map((u) => {
+              filteredUsers.map((u, idx) => {
                 const isVerified = u.isVerifiedByUser;
                 const isActive = u.subscription.status === 'ACTIVE';
 
                 return (
                   <div
-                    key={u.userId}
+                    key={u.userId ? `${u.userId}-${idx}` : `user-${idx}`}
                     className="bg-white rounded-2xl border border-slate-200 hover:border-blue-400 p-5 shadow-xs transition space-y-3"
                   >
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
@@ -594,7 +1399,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       </div>
                     </div>
 
-                    {/* Discrete User Data Columns */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs text-slate-600">
                       <div>
                         <span className="text-[10px] text-slate-400 block font-semibold">{lang === 'si' ? 'සම්බන්ධතා' : 'Contact'}</span>
@@ -641,7 +1445,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
-      {/* TAB 2: Subscribers & Payment Approvals */}
+      {/* TAB 4: Subscribers & Payment Approvals */}
       {activeTab === 'subscribers' && (
         <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
@@ -659,13 +1463,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
 
           <div className="space-y-3">
-            {subscribers.map((u) => {
+            {subscribers.map((u, idx) => {
               const isPending = u.subscription.status === 'PENDING_APPROVAL';
               const isActive = u.subscription.status === 'ACTIVE';
 
               return (
                 <div 
-                  key={u.userId}
+                  key={u.userId ? `${u.userId}-${idx}` : `sub-${idx}`}
                   className={`p-4 rounded-2xl border transition flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
                     isPending 
                       ? 'border-amber-300 bg-amber-50/50' 
@@ -719,7 +1523,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     )}
                   </div>
 
-                  {/* Actions */}
                   <div className="flex items-center gap-2 shrink-0">
                     {!isActive ? (
                       <button
@@ -745,182 +1548,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
-      {/* TAB 3: Multi-Source Scanner & OCR Extractor */}
-      {activeTab === 'scanner' && (
-        <div className="space-y-6">
-          {/* Multi-Source Web Scanner */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
-                  <Radio className="w-5 h-5 text-indigo-600" />
-                  <span>{lang === 'si' ? 'ශ්‍රී ලංකා රැකියා මූලාශ්‍ර ස්කෑනරය (Web Sources Crawler)' : 'Multi-Source Crawler Simulator'}</span>
-                </h3>
-                <p className="text-xs text-slate-600 mt-1 max-w-xl">
-                  {lang === 'si'
-                    ? 'documents.gov.lk (ගැසට්), TopJobs.lk, XpressJobs, සහ Finders.lk යන අඩවි පිරික්සා අනුපිටපත් (Duplicates) ඒකාබද්ධ කරයි.'
-                    : 'Scans official Sri Lankan job boards, identifies duplicate postings, and consolidates them.'}
-                </p>
-              </div>
-
-              <button
-                onClick={handleRunScanner}
-                disabled={isScanning}
-                className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold text-xs sm:text-sm px-5 py-2.5 rounded-xl transition shadow-xs flex items-center gap-2 cursor-pointer shrink-0"
-              >
-                {isScanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                <span>{lang === 'si' ? 'දැන්ම ස්කෑන් කරන්න' : 'Run Full Multi-Portal Scan'}</span>
-              </button>
-            </div>
-
-            {scanResult && (
-              <div className="p-4 bg-blue-50 border border-blue-200 rounded-2xl text-xs space-y-2">
-                <span className="font-bold text-blue-900 block">{scanResult.message}</span>
-                <div className="flex flex-wrap gap-3">
-                  <span className="bg-white p-2 rounded-lg border border-blue-200">
-                    📥 Scanned: <strong>{scanResult.scannedCount}</strong>
-                  </span>
-                  <span className="bg-white p-2 rounded-lg border border-blue-200 text-emerald-700">
-                    ✨ New Added: <strong>{scanResult.newInsertedCount}</strong>
-                  </span>
-                  <span className="bg-white p-2 rounded-lg border border-blue-200 text-purple-700">
-                    🧬 Duplicates Merged: <strong>{scanResult.duplicateMergedCount}</strong>
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* AI Gazette & Newspaper Notice Ingestion */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
-            <div>
-              <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-amber-500" />
-                <span>{lang === 'si' ? 'ගැසට් පත්‍රය / පුවත්පත් දැන්වීම් AI ඔස්සේ කියවීම (OCR Extraction)' : 'AI Gazette & Notice Extractor (Sinhala / English)'}</span>
-              </h3>
-              <p className="text-xs text-slate-600 mt-1">
-                {lang === 'si'
-                  ? 'රජයේ ගැසට් පත්‍රයක හෝ පුවත්පත් දැන්වීමක ඡායාරූපයක් (Image) හෝ පෙළ (Sinhala / English) මෙහි ඇතුළත් කරන්න. Gemini AI මඟින් අදාළ සියලු සුදුසුකම් හා විස්තර නිවැරදිව කියවා දත්ත ගබඩාවට එක් කරනු ඇත.'
-                  : 'Upload an image of a Government Gazette clipping or newspaper ad in Sinhala or English. Gemini AI extracts structured vacancy details.'}
-              </p>
-            </div>
-
-            <form onSubmit={handleExtractJob} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Image upload */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-700 block">
-                    {lang === 'si' ? 'දැන්වීමේ ඡායාරූපය (JPG / PNG / Clipping):' : 'Notice Clipping / Image:'}
-                  </label>
-                  <label className="border-2 border-dashed border-slate-300 hover:border-blue-500 bg-slate-50 rounded-2xl p-5 flex flex-col items-center justify-center text-center cursor-pointer transition">
-                    <Upload className="w-6 h-6 text-blue-600 mb-1" />
-                    <span className="text-xs font-bold text-slate-800">
-                      {ocrImageName || (lang === 'si' ? 'ඡායාරූපය තෝරන්න' : 'Upload Image')}
-                    </span>
-                    <span className="text-[10px] text-slate-500 mt-0.5">
-                      Sinhala or English notice
-                    </span>
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      className="hidden" 
-                      onChange={handleImageUpload} 
-                    />
-                  </label>
-
-                  {isCompressing ? (
-                    <div className="flex items-center gap-2 text-xs text-blue-600 font-medium animate-pulse">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>{lang === 'si' ? 'ඡායාරූපය ප්‍රශස්තකරණය වෙමින් පවතී...' : 'Optimizing notice image...'}</span>
-                    </div>
-                  ) : ocrImageBase64 ? (
-                    <div className="flex items-center gap-2 text-xs text-emerald-600 font-medium">
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>{ocrImageName} {lang === 'si' ? 'කියවීමට සූදානම්' : 'ready for OCR'}</span>
-                    </div>
-                  ) : null}
-                </div>
-
-                {/* Source Details & Text */}
-                <div className="space-y-2">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-xs font-bold text-slate-700 block mb-1">
-                        {lang === 'si' ? 'මූලාශ්‍රය' : 'Source Platform'}
-                      </label>
-                      <select
-                        value={ocrSourcePlatform}
-                        onChange={(e) => setOcrSourcePlatform(e.target.value)}
-                        className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-white"
-                      >
-                        <option value="Government Gazette (documents.gov.lk)">documents.gov.lk (Gazette)</option>
-                        <option value="TopJobs.lk">TopJobs.lk</option>
-                        <option value="XpressJobs">XpressJobs</option>
-                        <option value="Finders.lk">Finders.lk</option>
-                        <option value="Silumina / Sunday Observer Notice">Silumina / Observer (Newspaper)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-bold text-slate-700 block mb-1">
-                        {lang === 'si' ? 'මූලාශ්‍ර Link එක' : 'Source URL (Optional)'}
-                      </label>
-                      <input
-                        type="text"
-                        value={ocrSourceUrl}
-                        onChange={(e) => setOcrSourceUrl(e.target.value)}
-                        placeholder="https://..."
-                        className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-white"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-bold text-slate-700 block mb-1">
-                      {lang === 'si' ? 'නැතහොත් පෙළ (Notice Text in Sinhala / English):' : 'Or Paste Notice Text:'}
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={ocrText}
-                      onChange={(e) => setOcrText(e.target.value)}
-                      placeholder={lang === 'si' ? 'ගැසට් පත්‍රයේ හෝ දැන්වීමේ සඳහන් පෙළ කොටස මෙහි ඇතුළත් කරන්න...' : 'Paste text from Gazette Part I: Sec (IIA) or newspaper notice...'}
-                      className="w-full text-xs p-3 rounded-xl border border-slate-200 bg-white resize-none"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
-                {extractSuccessMsg ? (
-                  <div className={`p-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 ${
-                    extractSuccessMsg.startsWith('❌') 
-                      ? 'bg-rose-50 text-rose-700 border border-rose-200' 
-                      : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                  }`}>
-                    {extractSuccessMsg.startsWith('❌') ? (
-                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                    ) : (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                    )}
-                    <span>{extractSuccessMsg.replace(/^[❌✅]\s*/, '')}</span>
-                  </div>
-                ) : <div />}
-
-                <button
-                  type="submit"
-                  disabled={isExtracting || isCompressing || (!ocrText.trim() && !ocrImageBase64)}
-                  className="ml-auto bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-bold text-xs sm:text-sm px-6 py-2.5 rounded-xl transition shadow-xs flex items-center gap-2 cursor-pointer shrink-0"
-                >
-                  {isExtracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 text-amber-400" />}
-                  <span>{lang === 'si' ? 'AI මඟින් නිස්සාරණය කර එක් කරන්න' : 'Extract & Ingest via Gemini'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 4: Notification Logs */}
+      {/* TAB 5: Notification Logs */}
       {activeTab === 'logs' && (
         <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
           <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
@@ -934,9 +1562,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           ) : (
             <div className="space-y-2">
-              {notificationLogs.map((log) => (
+              {notificationLogs.map((log, idx) => (
                 <div 
-                  key={log.id} 
+                  key={log.id ? `${log.id}-${idx}` : `log-${idx}`} 
                   className="p-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2"
                 >
                   <div>
@@ -970,7 +1598,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
-      {/* TAB 5: GitHub & Render Hosting Guide */}
+      {/* TAB 6: GitHub & Render Hosting Guide */}
       {activeTab === 'hosting' && (
         <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6">
           <div className="border-b border-slate-100 pb-4">
@@ -985,7 +1613,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </p>
           </div>
 
-          {/* Step 1: Git setup */}
           <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
             <div className="flex items-center gap-2">
               <span className="bg-slate-900 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">1</span>
@@ -993,22 +1620,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 {lang === 'si' ? 'GitHub වෙත Code එක Push කිරීම (Git Setup)' : 'Push Code to GitHub'}
               </h4>
             </div>
-            <p className="text-xs text-slate-600">
-              {lang === 'si'
-                ? 'ඔබගේ පරිගණකයේ Terminal එක විවෘත කර Project ෆෝල්ඩරය තුළ පහත commands ක්‍රියාත්මක කරන්න:'
-                : 'Open your terminal in the project root directory and run:'}
-            </p>
             <div className="bg-slate-900 text-slate-100 rounded-xl p-3.5 text-xs font-mono relative">
               <pre className="overflow-x-auto whitespace-pre">
 {`git init
 git add .
-git commit -m "Initial commit for LK Job Master"
+git commit -m "Update LK Job Master with Scraper, AI Deduplication & Backups"
 git branch -M main
 git remote add origin https://github.com/YOUR_USERNAME/lk-job-master.git
 git push -u origin main`}
               </pre>
               <button
-                onClick={() => copySnippet(`git init\ngit add .\ngit commit -m "Initial commit for LK Job Master"\ngit branch -M main\ngit remote add origin https://github.com/YOUR_USERNAME/lk-job-master.git\ngit push -u origin main`, 'git-commands')}
+                onClick={() => copySnippet(`git init\ngit add .\ngit commit -m "Update LK Job Master with Scraper, AI Deduplication & Backups"\ngit branch -M main\ngit remote add origin https://github.com/YOUR_USERNAME/lk-job-master.git\ngit push -u origin main`, 'git-commands')}
                 className="absolute top-2.5 right-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded text-[11px] cursor-pointer"
               >
                 {copiedCodeSnippet === 'git-commands' ? 'Copied!' : 'Copy'}
@@ -1016,7 +1638,6 @@ git push -u origin main`}
             </div>
           </div>
 
-          {/* Step 2: Render.com Setup */}
           <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
             <div className="flex items-center gap-2">
               <span className="bg-slate-900 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">2</span>
@@ -1025,12 +1646,8 @@ git push -u origin main`}
               </h4>
             </div>
             <ul className="text-xs text-slate-700 space-y-2 list-disc list-inside">
-              <li>{lang === 'si' ? 'Render.com (https://render.com) වෙත ගොස් ඔබගේ GitHub ගිණුමෙන් Sign in වන්න.' : 'Visit https://render.com and sign in with GitHub.'}</li>
-              <li>{lang === 'si' ? 'Dashboard එකේ "New +" ක්ලික් කර "Web Service" තෝරන්න.' : 'Click "New +" > "Web Service".'}</li>
-              <li>{lang === 'si' ? 'ඉහත සාදන ලද "lk-job-master" GitHub repository එක Connect කරන්න.' : 'Connect your "lk-job-master" repository.'}</li>
-              <li>
-                <strong>Runtime:</strong> <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">Node</span>
-              </li>
+              <li>{lang === 'si' ? 'Render.com (https://render.com) වෙත ගොස් Sign in වන්න.' : 'Visit https://render.com and sign in with GitHub.'}</li>
+              <li>{lang === 'si' ? 'Dashboard එකේ "New +" ක්ලික් කර "Web Service" තෝරා "lk-job-master" repo එක සම්බන්ධ කරන්න.' : 'Click "New +" > "Web Service" and connect "lk-job-master" repository.'}</li>
               <li>
                 <strong>Build Command:</strong> <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">npm install && npm run build</span>
               </li>
@@ -1040,7 +1657,6 @@ git push -u origin main`}
             </ul>
           </div>
 
-          {/* Step 3: Environment Variables */}
           <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
             <div className="flex items-center gap-2">
               <span className="bg-slate-900 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">3</span>
@@ -1048,11 +1664,6 @@ git push -u origin main`}
                 {lang === 'si' ? 'පරිසර විචල්‍යයන් (Environment Variables) එකතු කිරීම' : 'Add Environment Variables in Render'}
               </h4>
             </div>
-            <p className="text-xs text-slate-600">
-              {lang === 'si'
-                ? 'Render dashboard එකේ "Environment Variables" කොටසට පහත keys එකතු කරන්න:'
-                : 'In Render service settings, add these environment variables:'}
-            </p>
             <div className="space-y-2 text-xs font-mono">
               <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between">
                 <div>
@@ -1075,21 +1686,342 @@ git push -u origin main`}
               </div>
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Step 4: Verification */}
-          <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-3">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-            <div className="text-xs text-emerald-900 space-y-1">
-              <p className="font-bold">
-                {lang === 'si' ? '✅ Deploy වූ පසු ඔබගේ App එක සජීවීව ක්‍රියාත්මක වේ!' : '✅ Live URL Activated!'}
-              </p>
-              <p className="text-emerald-800">
+      {/* TAB 7: GitHub Modified Files & Upload Center */}
+      {activeTab === 'github' && (
+        <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6">
+          <div className="border-b border-slate-100 pb-4">
+            <div className="flex items-center gap-2">
+              <span className="bg-purple-100 text-purple-800 text-xs px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
+                <GitBranch className="w-3.5 h-3.5" />
+                {lang === 'si' ? 'GitHub ගොනු ලැයිස්තුව' : 'GitHub Modified Files'}
+              </span>
+            </div>
+            <h3 className="text-base sm:text-xl font-black text-slate-900 mt-2 flex items-center gap-2">
+              <Terminal className="w-6 h-6 text-purple-600" />
+              <span>
                 {lang === 'si'
-                  ? 'Render මඟින් ඔබට නොමිලේ https://lk-job-master.onrender.com වැනි SSL සහතික සහිත සජීවී සබැඳියක් ලබාදෙනු ඇත. පරිශීලකයින්ට සහ Admin ට ඕනෑම තැනක සිට පිවිසිය හැක.'
-                  : 'Render provides a free live HTTPS URL (e.g. https://lk-job-master.onrender.com). The CV reader, gazette pipeline, and WhatsApp alert engine will function smoothly.'}
-              </p>
+                  ? 'වෙනස් කළ Files පමණක් GitHub වෙත Upload කිරීම (Modified Files to Push)'
+                  : 'Only Modified Files for GitHub Repository Upload'}
+              </span>
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-600 mt-1 max-w-2xl">
+              {lang === 'si'
+                ? 'ඔබගේ ඉල්ලීම පරිදි, අලුතින් එක් කරන ලද scraper, AI deduplication, LK Job Master branding සහ selective deployment සඳහා වෙනස් කරන ලද files පමණක් පහත වෙන් වෙන්ව දක්වා ඇත.'
+                : 'Exact list of modified files with their respective changes and copyable Git commands for immediate upload to GitHub.'}
+            </p>
+          </div>
+
+          {/* Quick Copy Git Command Box */}
+          <div className="bg-slate-900 text-slate-100 rounded-2xl p-5 space-y-3 shadow-md">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                <Terminal className="w-4 h-4" />
+                <span>{lang === 'si' ? 'වෙනස් කළ Files පමණක් Add කර Push කිරීමේ Command එක:' : 'Copy-Paste Git Command (Modified Files Only):'}</span>
+              </span>
+              <button
+                onClick={() => copySnippet(
+                  `git add server.ts src/components/AdminPanel.tsx src/components/JobDetailsModal.tsx src/components/MatchesView.tsx src/types.ts src/App.tsx metadata.json\n` +
+                  `git commit -m "feat: LK Job Master multi-site scraper, AI duplicate detection, and selective deploy"\n` +
+                  `git push origin main`,
+                  'git-selective'
+                )}
+                className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 transition cursor-pointer"
+              >
+                {copiedCodeSnippet === 'git-selective' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedCodeSnippet === 'git-selective' ? 'Copied!' : 'Copy Commands'}</span>
+              </button>
+            </div>
+            <pre className="text-xs font-mono bg-slate-950 p-3 rounded-xl overflow-x-auto text-emerald-400 border border-slate-800">
+{`git add server.ts src/components/AdminPanel.tsx src/components/JobDetailsModal.tsx src/components/MatchesView.tsx src/types.ts src/App.tsx metadata.json
+git commit -m "feat: LK Job Master multi-site scraper, AI duplicate detection, and selective deploy"
+git push origin main`}
+            </pre>
+          </div>
+
+          {/* Files List Breakdown */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+              {lang === 'si' ? 'වෙනස් වූ / අලුතින් එක් වූ Files ලැයිස්තුව (7 Files):' : 'List of Modified Files (7 Files):'}
+            </h4>
+
+            <div className="grid grid-cols-1 gap-2.5">
+              {/* File 1 */}
+              <div className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-black text-slate-900 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                      server.ts
+                    </span>
+                    <span className="bg-amber-100 text-amber-900 text-[10px] font-bold px-2 py-0.2 rounded-full">
+                      Backend Core (Modified)
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    Live web fetcher (<code className="text-indigo-600 font-mono">fetchWebPageText</code>), multi-portal scraper (<code className="text-indigo-600 font-mono">/api/admin/scraper/run</code>), intra-batch deduplication, AI duplicate detection (<code className="text-indigo-600 font-mono">detectDuplicateVacancy</code> &amp; <code className="text-indigo-600 font-mono">/api/admin/scraper/ai-verify-duplicate</code>), selective deploy (<code className="text-indigo-600 font-mono">/api/admin/scraper/deploy</code>), and candidate export.
+                  </p>
+                </div>
+                <button
+                  onClick={() => copySnippet('server.ts', 'f-server')}
+                  className="text-xs text-slate-500 hover:text-slate-900 flex items-center gap-1 font-mono shrink-0 cursor-pointer"
+                >
+                  {copiedCodeSnippet === 'f-server' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>Copy Path</span>
+                </button>
+              </div>
+
+              {/* File 2 */}
+              <div className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-black text-slate-900 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                      src/components/AdminPanel.tsx
+                    </span>
+                    <span className="bg-amber-100 text-amber-900 text-[10px] font-bold px-2 py-0.2 rounded-full">
+                      Admin UI (Modified)
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    Multi-portal scraper triggers, live web URL scraper input, AI duplicate detection badges with match score, deep AI verification button, staging queue review, selective deploy checkboxes, quick filters, and GitHub files center.
+                  </p>
+                </div>
+                <button
+                  onClick={() => copySnippet('src/components/AdminPanel.tsx', 'f-admin')}
+                  className="text-xs text-slate-500 hover:text-slate-900 flex items-center gap-1 font-mono shrink-0 cursor-pointer"
+                >
+                  {copiedCodeSnippet === 'f-admin' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>Copy Path</span>
+                </button>
+              </div>
+
+              {/* File 3 */}
+              <div className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-black text-slate-900 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                      src/components/JobDetailsModal.tsx
+                    </span>
+                    <span className="bg-blue-100 text-blue-900 text-[10px] font-bold px-2 py-0.2 rounded-full">
+                      Component (Modified)
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    Updated share messages to LK Job Master branding and verified multi-portal source link indicators.
+                  </p>
+                </div>
+                <button
+                  onClick={() => copySnippet('src/components/JobDetailsModal.tsx', 'f-modal')}
+                  className="text-xs text-slate-500 hover:text-slate-900 flex items-center gap-1 font-mono shrink-0 cursor-pointer"
+                >
+                  {copiedCodeSnippet === 'f-modal' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>Copy Path</span>
+                </button>
+              </div>
+
+              {/* File 4 */}
+              <div className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-black text-slate-900 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                      src/types.ts
+                    </span>
+                    <span className="bg-blue-100 text-blue-900 text-[10px] font-bold px-2 py-0.2 rounded-full">
+                      Typings (Modified)
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    Defines <code className="text-indigo-600 font-mono">StagedJob</code> with AI duplicate metadata, <code className="text-indigo-600 font-mono">JobVacancy</code> with multi-source array, and <code className="text-indigo-600 font-mono">UserProfile</code> discrete backup schemas.
+                  </p>
+                </div>
+                <button
+                  onClick={() => copySnippet('src/types.ts', 'f-types')}
+                  className="text-xs text-slate-500 hover:text-slate-900 flex items-center gap-1 font-mono shrink-0 cursor-pointer"
+                >
+                  {copiedCodeSnippet === 'f-types' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>Copy Path</span>
+                </button>
+              </div>
+
+              {/* File 5 */}
+              <div className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-black text-slate-900 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                      src/App.tsx
+                    </span>
+                    <span className="bg-blue-100 text-blue-900 text-[10px] font-bold px-2 py-0.2 rounded-full">
+                      App Root (Modified)
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    Updated hero titles to LK Job Master, real-time live refresh callbacks when jobs are deployed from scraper.
+                  </p>
+                </div>
+                <button
+                  onClick={() => copySnippet('src/App.tsx', 'f-app')}
+                  className="text-xs text-slate-500 hover:text-slate-900 flex items-center gap-1 font-mono shrink-0 cursor-pointer"
+                >
+                  {copiedCodeSnippet === 'f-app' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>Copy Path</span>
+                </button>
+              </div>
+
+              {/* File 6 */}
+              <div className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-black text-slate-900 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                      metadata.json
+                    </span>
+                    <span className="bg-blue-100 text-blue-900 text-[10px] font-bold px-2 py-0.2 rounded-full">
+                      Metadata (Modified)
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    LK Job Master application name, AI studio deployment configuration, and capability flags.
+                  </p>
+                </div>
+                <button
+                  onClick={() => copySnippet('metadata.json', 'f-meta')}
+                  className="text-xs text-slate-500 hover:text-slate-900 flex items-center gap-1 font-mono shrink-0 cursor-pointer"
+                >
+                  {copiedCodeSnippet === 'f-meta' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>Copy Path</span>
+                </button>
+              </div>
+
+              {/* File 7 */}
+              <div className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-black text-slate-900 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                      src/components/MatchesView.tsx
+                    </span>
+                    <span className="bg-blue-100 text-blue-900 text-[10px] font-bold px-2 py-0.2 rounded-full">
+                      Component (Modified)
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    Resilient unique keying for matched job recommendations and enhanced multi-source badge indicators.
+                  </p>
+                </div>
+                <button
+                  onClick={() => copySnippet('src/components/MatchesView.tsx', 'f-matches')}
+                  className="text-xs text-slate-500 hover:text-slate-900 flex items-center gap-1 font-mono shrink-0 cursor-pointer"
+                >
+                  {copiedCodeSnippet === 'f-matches' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>Copy Path</span>
+                </button>
+              </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Edit Staged Job Modal */}
+      {editingStagedJob && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <form 
+            onSubmit={handleSaveStagedJob}
+            className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl space-y-4 border border-slate-200 max-h-[90vh] overflow-y-auto"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-base font-bold text-slate-900">
+                Edit Staged Vacancy Before Deployment
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditingStagedJob(null)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Job Title (English):</label>
+                <input
+                  type="text"
+                  required
+                  value={editingStagedJob.title}
+                  onChange={(e) => setEditingStagedJob({ ...editingStagedJob, title: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-200"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Job Title (Sinhala):</label>
+                <input
+                  type="text"
+                  value={editingStagedJob.titleSi}
+                  onChange={(e) => setEditingStagedJob({ ...editingStagedJob, titleSi: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-200"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Organization:</label>
+                <input
+                  type="text"
+                  required
+                  value={editingStagedJob.organization}
+                  onChange={(e) => setEditingStagedJob({ ...editingStagedJob, organization: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-200"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Salary Range:</label>
+                  <input
+                    type="text"
+                    value={editingStagedJob.salaryRange}
+                    onChange={(e) => setEditingStagedJob({ ...editingStagedJob, salaryRange: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Closing Date:</label>
+                  <input
+                    type="date"
+                    value={editingStagedJob.closingDate}
+                    onChange={(e) => setEditingStagedJob({ ...editingStagedJob, closingDate: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Qualifications:</label>
+                <textarea
+                  rows={2}
+                  value={editingStagedJob.qualificationsText}
+                  onChange={(e) => setEditingStagedJob({ ...editingStagedJob, qualificationsText: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-200"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditingStagedJob(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 cursor-pointer shadow-xs"
+              >
+                Save Staged Changes
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
@@ -1125,9 +2057,7 @@ git push -u origin main`}
               </button>
             </div>
 
-            {/* Dossier sections */}
             <div className="space-y-4 text-xs">
-              {/* Contact & Personal */}
               <div className="bg-slate-50 p-4 rounded-2xl space-y-2">
                 <span className="font-bold text-slate-900 block uppercase tracking-wider text-[11px]">Personal & Contact</span>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-slate-700">
@@ -1141,7 +2071,6 @@ git push -u origin main`}
                 </div>
               </div>
 
-              {/* Education */}
               <div className="bg-slate-50 p-4 rounded-2xl space-y-2">
                 <span className="font-bold text-slate-900 block uppercase tracking-wider text-[11px]">Education Criteria</span>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-slate-700">
@@ -1158,7 +2087,6 @@ git push -u origin main`}
                 </div>
               </div>
 
-              {/* Experience & Skills */}
               <div className="bg-slate-50 p-4 rounded-2xl space-y-2">
                 <span className="font-bold text-slate-900 block uppercase tracking-wider text-[11px]">Experience & Skills</span>
                 <p><strong>Total Experience:</strong> {selectedUserDossier.experienceYears} Years</p>
@@ -1177,24 +2105,18 @@ git push -u origin main`}
                 </div>
               </div>
 
-              {/* Preferences */}
-              <div className="bg-slate-50 p-4 rounded-2xl space-y-1">
-                <span className="font-bold text-slate-900 block uppercase tracking-wider text-[11px]">Target Vacancies</span>
-                <p><strong>Preferred Sectors:</strong> {selectedUserDossier.preferredSectors.join(', ')}</p>
-                {selectedUserDossier.preferredRoles?.length > 0 && (
-                  <p><strong>Preferred Roles:</strong> {selectedUserDossier.preferredRoles.join(', ')}</p>
-                )}
-              </div>
-
-              {selectedUserDossier.cvSummary && (
-                <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-2xl">
-                  <span className="font-bold text-emerald-900 block mb-1">AI CV Summary:</span>
-                  <p className="text-emerald-800 leading-relaxed">{selectedUserDossier.cvSummary}</p>
+              {selectedUserDossier.otherDetails && (
+                <div className="bg-amber-50/60 border border-amber-200/80 p-4 rounded-2xl space-y-2">
+                  <span className="font-bold text-amber-950 block uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    <span>අමතර තොරතුරු සහ සුදුසුකම් (Other CV Information):</span>
+                  </span>
+                  <p className="text-slate-800 whitespace-pre-wrap leading-relaxed text-xs font-mono bg-white p-3 rounded-xl border border-amber-200/50">
+                    {selectedUserDossier.otherDetails}
+                  </p>
                 </div>
               )}
             </div>
 
-            {/* Quick Actions */}
             <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
               <button
                 onClick={() => {

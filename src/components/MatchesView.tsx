@@ -136,7 +136,7 @@ export const MatchesView: React.FC<MatchesViewProps> = ({
 
           return (
             <div 
-              key={job.id || index}
+              key={job.id ? `${job.id}-${index}` : `match-${index}`}
               className="bg-white rounded-3xl border border-slate-200/90 hover:border-blue-400 p-5 sm:p-6 shadow-xs transition hover:shadow-md space-y-4"
             >
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">

@@ -67,6 +67,7 @@ export interface UserProfile {
   experienceHistory?: string;
   cvFileName?: string;
   cvSummary?: string;
+  otherDetails?: string;
   isVerifiedByUser?: boolean;
   confirmedAt?: string;
   subscription: UserSubscription;
@@ -98,4 +99,37 @@ export interface NotificationLog {
   dispatchedAt: string;
   status: 'SENT' | 'SIMULATED';
   whatsappLink?: string;
+}
+
+export interface StagedJob {
+  stagedId: string;
+  title: string;
+  titleSi: string;
+  organization: string;
+  category: 'GOVERNMENT' | 'SEMI_GOVERNMENT' | 'PRIVATE';
+  gazetteReference?: string;
+  sources: JobSource[];
+  educationRequired: string[];
+  qualificationsText: string;
+  experienceYears: number;
+  ageLimit: string;
+  salaryRange: string;
+  closingDate: string;
+  location: string;
+  applicationMethod: 'ONLINE' | 'POSTAL_GAZETTE' | 'EMAIL' | 'WALK_IN';
+  applyAddressOrLink: string;
+  gazetteDownloadUrl?: string;
+  isGazettePartIIA: boolean;
+  tags: string[];
+  scrapedAt: string;
+  aiDuplicateCheck: {
+    isDuplicate: boolean;
+    matchedExistingJobId?: string;
+    matchedJobTitle?: string;
+    matchedOrganization?: string;
+    confidenceScore: number;
+    reason: string;
+    suggestedAction: 'MERGE_SOURCES' | 'INSERT_AS_NEW';
+  };
+  selected?: boolean;
 }

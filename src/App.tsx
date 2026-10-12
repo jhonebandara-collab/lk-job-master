@@ -52,6 +52,7 @@ const initialUser: UserProfile = {
   experienceHistory: 'Assistant Accountant at Hayleys PLC (1.5 years), Finance Intern at Commercial Bank (6 months)',
   cvFileName: 'Kasun_Perera_CV_2026.pdf',
   cvSummary: 'Business Management graduate with 2 years financial & administrative experience. Seeking executive state gazette vacancies or corporate banking leadership roles.',
+  otherDetails: '• Languages: English (Fluent), Sinhala (Native)\n• Additional Certifications: Diploma in Business English (British Council), Advanced Excel & PowerBI Certification\n• Extracurricular: Secretary of Commerce Society, School Athletic Team Captain (Colorsman)\n• Driving License: Light Vehicles & Motorcycles (Class B, A1)\n• Non-Related Referees:\n  1. Dr. N. Rajapaksa - Senior Lecturer, Department of Business Administration, University of Sri Jayewardenepura (Tel: 0773344556, Email: rajapaksa@sjp.ac.lk)\n  2. Mr. K. Senanayake - Head of Finance, Hayleys PLC (Tel: 0714455667, Email: senanayake.k@hayleys.com)',
   isVerifiedByUser: true,
   confirmedAt: '2026-09-01T08:15:00Z',
   subscription: {
@@ -353,9 +354,9 @@ export default function App() {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {jobs.map((job) => (
+                {jobs.map((job, idx) => (
                   <JobCard
-                    key={job.id}
+                    key={`${job.id || 'job'}-${idx}`}
                     job={job}
                     lang={lang}
                     onSelect={(j) => setSelectedJobForModal(j)}

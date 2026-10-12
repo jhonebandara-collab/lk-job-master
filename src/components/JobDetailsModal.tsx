@@ -39,14 +39,14 @@ export const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
 
   const handleShareWhatsApp = () => {
     const text = encodeURIComponent(
-      `🇱🇰 *LK Job Radar Alert: ${job.title}*\n\n` +
+      `🇱🇰 *LK Job Master Alert: ${job.title}*\n\n` +
       `🏢 *ආයතනය / Ministry:* ${job.organization}\n` +
       `📜 *අවම සුදුසුකම්:* ${job.educationRequired.join(', ')}\n` +
       `💰 *වැටුප:* ${job.salaryRange}\n` +
       `📅 *අවසන් දිනය:* ${job.closingDate} (${daysLeft > 0 ? daysLeft + ' days left' : 'Closes soon'})\n` +
       (job.gazetteReference ? `🏛️ *ගැසට් අංකය:* ${job.gazetteReference}\n` : '') +
       `🔗 *අයදුම්පත් යොමුව:* ${job.applyAddressOrLink}\n\n` +
-      `_LK Job & Gazette Radar වෙතින් ස්වයංක්‍රීයව ජනනය කරන ලදී._`
+      `_LK Job Master වෙතින් ස්වයංක්‍රීයව ජනනය කරන ලදී._`
     );
     window.open(`https://wa.me/?text=${text}`, '_blank');
   };

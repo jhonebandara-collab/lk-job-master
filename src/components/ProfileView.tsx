@@ -50,6 +50,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [newSkillInput, setNewSkillInput] = useState('');
   const [newRoleInput, setNewRoleInput] = useState('');
   const [copiedId, setCopiedId] = useState(false);
+  const [copiedOther, setCopiedOther] = useState(false);
+
+  React.useEffect(() => {
+    setFormData(currentUser);
+  }, [currentUser]);
 
   // Sri Lanka Districts
   const districts = [
@@ -127,6 +132,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           preferredRoles: p.preferredRoles?.length ? p.preferredRoles : prev.preferredRoles,
           preferredSectors: p.preferredSectors?.length ? p.preferredSectors : prev.preferredSectors,
           preferredLocations: p.preferredLocations?.length ? p.preferredLocations : prev.preferredLocations,
+          otherDetails: p.otherDetails || prev.otherDetails || '',
           cvFileName: payload.fileName,
           cvSummary: p.summary,
           isVerifiedByUser: false, // will be confirmed by user
@@ -135,8 +141,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         setIsReviewMode(true);
         setParseStatus(
           lang === 'si' 
-            ? '✨ CV තොරතුරු සාර්ථකව කියවන ලදී! කරුණාකර පහත තොරතුරු පරීක්ෂා කර ඔබගේ Registration ID එක යටතේ Confirm කරන්න.' 
-            : '✨ CV data successfully extracted! Please review, manually edit if necessary, and Confirm & Save.'
+            ? '✨ CV තොරතුරු සාර්ථකව කියවන ලදී! පුද්ගලික ලිපිනය නිවැරදිව වෙන්කර හඳුනාගත් අතර, Referees, භාෂා, රියදුරු බලපත්‍ර හා අමතර සුදුසුකම් පහත "Other Information" විශාල කොටුවට ඇතුළත් කරන ලදී.' 
+            : '✨ CV extracted! Personal home address was cleanly separated from workplace/referee data, and overflow details were placed in the large Other Details box below.'
         );
       } else {
         throw new Error(data.error || 'Parsing error');
@@ -520,10 +526,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
           {/* Full Residential Address & City */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
-            <div className="sm:col-span-2">
-              <label className="text-xs font-bold text-slate-700 block mb-1">
-                {lang === 'si' ? 'පදිංචි ස්ථිර ලිපිනය (Permanent Address)' : 'Residential Address'}
-              </label>
+            <div className="sm:col-span-2 space-y-1">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700 block">
+                  {lang === 'si' ? 'පදිංචි ස්ථිර ලිපිනය (Personal Residential Address)' : 'Personal Residential Address'}
+                </label>
+                <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                  {lang === 'si' ? 'නිවසේ ලිපිනය පමණි' : 'Home address only'}
+                </span>
+              </div>
               <input
                 type="text"
                 value={formData.address || ''}
@@ -531,6 +542,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 placeholder="e.g. No. 45/2, Temple Road, Maharagama"
                 className="w-full text-xs sm:text-sm p-3 rounded-xl border border-slate-200 focus:outline-hidden focus:border-blue-500 bg-slate-50/50"
               />
+              <p className="text-[10px] text-slate-500 leading-tight">
+                {lang === 'si'
+                  ? '💡 කරුණාකර ඔබගේ පුද්ගලික ස්ථිර නිවසේ ලිපිනය පමණක් යොදන්න. (රැකියා ස්ථානයේ හෝ නිර්දේශකයින්ගේ ලිපින මෙහි නොයොදන්න - AI මඟින් ඒවා පහත අමතර තොරතුරු කොටුවට ඇතුළත් කර ඇත).'
+                  : '💡 Enter candidate personal residential home address only. Workplace and referee addresses belong in Other Details below.'}
+              </p>
             </div>
 
             <div>
@@ -792,6 +808,118 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   <Plus className="w-3.5 h-3.5" />
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Section D: Large Other Details Box (අමතර තොරතුරු සහ සුදුසුකම්) */}
+        <div className="bg-gradient-to-br from-slate-50 via-amber-50/20 to-slate-50 p-5 sm:p-6 rounded-3xl border-2 border-amber-300/80 space-y-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-200/60 pb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-amber-600" />
+                <h4 className="text-xs sm:text-sm font-black text-slate-900 uppercase tracking-wider text-amber-950">
+                  {lang === 'si' ? 'අමතර තොරතුරු සහ සුදුසුකම් (Other CV Information & Details)' : 'Section D: Other Information & Supplementary CV Data'}
+                </h4>
+                <span className="bg-amber-100 text-amber-900 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-amber-300">
+                  {lang === 'si' ? 'විශාල කොටුව (Other Box)' : 'Other Details Box'}
+                </span>
+              </div>
+              <p className="text-[11px] sm:text-xs text-slate-600 mt-1 max-w-2xl leading-relaxed">
+                {lang === 'si'
+                  ? 'CV පත්‍රයේ ඇති ඉහත cages (කොටු) වලට සෘජුව අයත් නොවන අනෙකුත් සියලුම අමතර තොරතුරු මෙහි අඩංගු වේ: නිර්දේශකයින් (Non-Related Referees), අමතර වෘත්තීය පාඨමාලා සහ ඩිප්ලෝමා (Extra Courses & Certifications), භාෂා ප්‍රවීණතාව (Languages), රියදුරු බලපත්‍රය (Driving License), ක්‍රීඩා/පාසල් ජයග්‍රහණ, ව්‍යාපෘති සහ අමතර සටහන්. ඔබට අවශ්‍ය පරිදි මෙහි සංස්කරණය කළ හැක.'
+                  : 'All supplementary CV information not fitting the cages above is organized here: Non-related referees, extra certifications/courses, language proficiencies, driving license, extracurricular achievements, projects, and special remarks. You can edit and format this box freely.'}
+              </p>
+            </div>
+
+            {/* Quick helper action buttons */}
+            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  const sample = `\n• Non-Related Referees:\n  1. Name: Dr./Mr. [Full Name], Designation: [Position], Organization: [Company/University], Phone: [07xxxxxxxx], Email: [referee@email.com]\n  2. Name: Dr./Mr. [Full Name], Designation: [Position], Organization: [Company/University], Phone: [07xxxxxxxx], Email: [referee@email.com]`;
+                  setFormData(prev => ({ ...prev, otherDetails: (prev.otherDetails ? prev.otherDetails + '\n' : '') + sample }));
+                }}
+                className="bg-white hover:bg-amber-100 text-slate-800 text-[11px] font-bold px-2.5 py-1.5 rounded-xl border border-amber-200 transition cursor-pointer shadow-xs"
+                title="Append Referees Template"
+              >
+                + {lang === 'si' ? 'නිර්දේශකයින් (Referees)' : 'Referees'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const sample = `\n• Languages Known:\n  - Sinhala: Mother Tongue (Native)\n  - English: Fluent in Speaking, Reading & Writing\n  - Tamil: Basic Working Knowledge`;
+                  setFormData(prev => ({ ...prev, otherDetails: (prev.otherDetails ? prev.otherDetails + '\n' : '') + sample }));
+                }}
+                className="bg-white hover:bg-amber-100 text-slate-800 text-[11px] font-bold px-2.5 py-1.5 rounded-xl border border-amber-200 transition cursor-pointer shadow-xs"
+                title="Append Languages"
+              >
+                + {lang === 'si' ? 'භාෂා (Languages)' : 'Languages'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const sample = `\n• Driving License:\n  - Valid Sri Lankan Driving License (Classes: Light Vehicles - B, Dual Purpose, Motorcycles - A1)`;
+                  setFormData(prev => ({ ...prev, otherDetails: (prev.otherDetails ? prev.otherDetails + '\n' : '') + sample }));
+                }}
+                className="bg-white hover:bg-amber-100 text-slate-800 text-[11px] font-bold px-2.5 py-1.5 rounded-xl border border-amber-200 transition cursor-pointer shadow-xs"
+                title="Append Driving License"
+              >
+                + {lang === 'si' ? 'රියදුරු බලපත්‍ර' : 'Driving License'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const sample = `\n• Additional Certifications & Courses:\n  - Diploma in Information Technology & Software Applications\n  - Certificate Course in Business English & Professional Communication`;
+                  setFormData(prev => ({ ...prev, otherDetails: (prev.otherDetails ? prev.otherDetails + '\n' : '') + sample }));
+                }}
+                className="bg-white hover:bg-amber-100 text-slate-800 text-[11px] font-bold px-2.5 py-1.5 rounded-xl border border-amber-200 transition cursor-pointer shadow-xs"
+                title="Append Certifications"
+              >
+                + {lang === 'si' ? 'අමතර සහතික' : 'Certificates'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (formData.otherDetails) {
+                    navigator.clipboard.writeText(formData.otherDetails);
+                    setCopiedOther(true);
+                    setTimeout(() => setCopiedOther(false), 2000);
+                  }
+                }}
+                className="bg-white hover:bg-slate-100 text-slate-700 text-[11px] font-bold px-2.5 py-1.5 rounded-xl border border-slate-200 transition cursor-pointer flex items-center gap-1 shadow-xs"
+                title="Copy Other Details"
+              >
+                {copiedOther ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-slate-500" />}
+                <span>{copiedOther ? 'Copied' : (lang === 'si' ? 'පිටපත්' : 'Copy')}</span>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <textarea
+              rows={8}
+              value={formData.otherDetails || ''}
+              onChange={(e) => setFormData({ ...formData, otherDetails: e.target.value })}
+              placeholder={
+                lang === 'si'
+                  ? 'CV එකේ ඇති අනෙකුත් සියලුම අමතර තොරතුරු මෙහි ඇතුළත් වේ...\n• Languages: Sinhala (Native), English (Fluent)\n• Additional Courses & Certifications: Diploma in Information Technology, Certificate in Graphic Design\n• Driving License: Light Vehicles (Class B) & Motorbikes\n• Extracurricular Activities: School Prefect, Cricket Team Captain\n• Non-Related Referees:\n  1. Dr. A. Perera (Senior Lecturer, Tel: 077xxxxxxx, Email: perera@univ.lk)\n  2. Mr. B. Silva (Finance Director, Tel: 071xxxxxxx, Email: silva@company.lk)'
+                  : 'Enter or review all extra CV details...\n• Languages: Sinhala, English (Fluent)\n• Additional Courses: Diploma in IT, Certificate in Graphic Design\n• Driving License: Light Vehicles (Class B) & Motorbikes\n• Non-Related Referees: Dr. A. Perera (077xxxxxxx), Mr. B. Silva (071xxxxxxx)'
+              }
+              className="w-full text-xs sm:text-sm p-4 rounded-2xl border border-slate-300 focus:outline-hidden focus:border-amber-500 bg-white shadow-inner font-mono leading-relaxed resize-y min-h-[220px]"
+            />
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center text-[11px] text-slate-500 mt-2 px-1 gap-1">
+              <span className="flex items-center gap-1">
+                <Info className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span>{lang === 'si' ? 'අවශ්‍ය පරිදි ඕනෑම අමතර සටහනක් මෙම විශාල කොටුවේ ලියා තැබිය හැක.' : 'You can freely add, format, or edit extra notes in this large box.'}</span>
+              </span>
+              <span className="font-mono text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
+                {(formData.otherDetails || '').length} characters • {((formData.otherDetails || '').match(/\n/g) || []).length + 1} lines
+              </span>
             </div>
           </div>
         </div>
